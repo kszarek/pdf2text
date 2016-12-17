@@ -4,26 +4,27 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"time"
+
+	"github.com/valyala/fasthttp"
 )
 
-func convertPDF(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "post only", http.StatusMethodNotAllowed)
+func convertPDF(ctx *fasthttp.RequestCtx) {
+	if string(ctx.Method()) != "POST" {
+		ctx.Error("post only", 405)
 		return
 	}
-	if r.Body == nil {
-		http.Error(w, "Body is missing", http.StatusBadRequest)
+	if ctx.PostBody() == nil {
+		ctx.Error("Body is missing", 400)
 		return
 	}
 	tmpFileName := "/tmp/pdftotext.tmp" + time.Now().String()
-	bodyBytes, _ := ioutil.ReadAll(r.Body)
+	bodyBytes := ctx.PostBody()
 	err := ioutil.WriteFile(tmpFileName, bodyBytes, 0600)
 	if err != nil {
-		http.Error(w, "Failed to open the file for writing", http.StatusInternalServerError)
+		ctx.Error("Failed to open the file for writing", 500)
 		return
 	}
 	defer os.Remove(tmpFileName)
@@ -32,13 +33,15 @@ func convertPDF(w http.ResponseWriter, r *http.Request) {
 	body, err := exec.Command("pdftotext", "-nopgbrk", "-enc", "UTF-8", tmpFileName, "-").Output()
 	if err != nil {
 		log.Printf("pdftotext error: %s", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		ctx.Error(err.Error(), 500)
 	}
-	fmt.Fprintf(w, string(body))
+	fmt.Fprintf(ctx, string(body))
 	// log.Printf("File successfully converted.")
 }
 
 func main() {
-	http.HandleFunc("/", convertPDF)
-	log.Fatal(http.ListenAndServe(":5000", nil))
+	h := convertPDF
+	if err := fasthttp.ListenAndServe(":5000", h); err != nil {
+		log.Fatalf("Error in ListenAndServe: %s", err)
+	}
 }
